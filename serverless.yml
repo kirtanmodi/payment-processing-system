@@ -7,6 +7,10 @@ provider:
   region: us-east-1
   stage: ${opt:stage, 'dev'}
 
+custom:
+  ecrRepository: "575108919661.dkr.ecr.us-east-1.amazonaws.com/payment-node-app"
+  imageTag: "dev"
+
 functions:
   # We'll define functions here later
 
@@ -425,6 +429,159 @@ resources:
         Tags:
           - Key: Name
             Value: ${self:service}-aurora-instance1-${self:provider.stage}
+
+    # ECS Cluster
+    ECSCluster:
+      Type: AWS::ECS::Cluster
+      Properties:
+        ClusterName: ${self:service}-cluster-${self:provider.stage}
+        CapacityProviders:
+          - FARGATE
+          - FARGATE_SPOT
+        DefaultCapacityProviderStrategy:
+          - CapacityProvider: FARGATE
+            Weight: 1
+        Tags:
+          - Key: Name
+            Value: ${self:service}-cluster-${self:provider.stage}
+
+    # IAM Role for ECS Task Execution
+    ECSTaskExecutionRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: ecs-tasks.amazonaws.com
+              Action: sts:AssumeRole
+        ManagedPolicyArns:
+          - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
+        Policies:
+          - PolicyName: SecretsManagerAccess
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - secretsmanager:GetSecretValue
+                  Resource: !Ref DatabaseSecret
+        Tags:
+          - Key: Name
+            Value: ${self:service}-task-execution-role-${self:provider.stage}
+
+    # IAM Role for ECS Task
+    ECSTaskRole:
+      Type: AWS::IAM::Role
+      Properties:
+        AssumeRolePolicyDocument:
+          Version: '2012-10-17'
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service: ecs-tasks.amazonaws.com
+              Action: sts:AssumeRole
+        Policies:
+          - PolicyName: TaskPermissions
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: Allow
+                  Action:
+                    - logs:CreateLogGroup
+                    - logs:CreateLogStream
+                    - logs:PutLogEvents
+                  Resource: '*'
+        Tags:
+          - Key: Name
+            Value: ${self:service}-task-role-${self:provider.stage}
+
+    # CloudWatch Log Group for ECS Tasks
+    ECSLogGroup:
+      Type: AWS::Logs::LogGroup
+      Properties:
+        LogGroupName: /ecs/${self:service}-${self:provider.stage}
+        RetentionInDays: 14
+
+    # ECS Task Definition
+    PaymentProcessingTaskDefinition:
+      Type: AWS::ECS::TaskDefinition
+      Properties:
+        Family: ${self:service}-task-${self:provider.stage}
+        Cpu: '256'
+        Memory: '512'
+        NetworkMode: awsvpc
+        RequiresCompatibilities:
+          - FARGATE
+        ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
+        TaskRoleArn: !GetAtt ECSTaskRole.Arn
+        ContainerDefinitions:
+          - Name: payment-app
+            Image: ${self:custom.ecrRepository}:${self:custom.imageTag}
+            Essential: true
+            PortMappings:
+              - ContainerPort: 3000
+                HostPort: 3000
+                Protocol: tcp
+            LogConfiguration:
+              LogDriver: awslogs
+              Options:
+                awslogs-group: !Ref ECSLogGroup
+                awslogs-region: !Ref AWS::Region
+                awslogs-stream-prefix: payment-app
+            Environment:
+              - Name: NODE_ENV
+                Value: ${self:provider.stage}
+              - Name: PORT
+                Value: '3000'
+              - Name: DB_HOST
+                Value: !GetAtt AuroraCluster.Endpoint.Address
+              - Name: DB_PORT
+                Value: '5432'
+              - Name: DB_NAME
+                Value: payrix
+              - Name: DB_USERNAME
+                Value: !Join ['', ['{{resolve:secretsmanager:', !Ref DatabaseSecret, ':SecretString:username}}' ]]
+            Secrets:
+              - Name: DB_PASSWORD
+                ValueFrom: !Join ['', [!Ref DatabaseSecret, ':password::'] ]
+        Tags:
+          - Key: Name
+            Value: ${self:service}-task-${self:provider.stage}
+
+    # ECS Service
+    PaymentProcessingService:
+      Type: AWS::ECS::Service
+      DependsOn: HttpListener
+      Properties:
+        ServiceName: ${self:service}-service-${self:provider.stage}
+        Cluster: !Ref ECSCluster
+        TaskDefinition: !Ref PaymentProcessingTaskDefinition
+        DesiredCount: 2
+        LaunchType: FARGATE
+        DeploymentConfiguration:
+          MaximumPercent: 200
+          MinimumHealthyPercent: 100
+          DeploymentCircuitBreaker:
+            Enable: true
+            Rollback: true
+        NetworkConfiguration:
+          AwsvpcConfiguration:
+            AssignPublicIp: DISABLED
+            SecurityGroups:
+              - !Ref FargateTaskSecurityGroup
+            Subnets:
+              - !Ref PrivateSubnet1
+              - !Ref PrivateSubnet2
+        LoadBalancers:
+          - ContainerName: payment-app
+            ContainerPort: 3000
+            TargetGroupArn: !Ref DefaultTargetGroup
+        HealthCheckGracePeriodSeconds: 60
+        Tags:
+          - Key: Name
+            Value: ${self:service}-service-${self:provider.stage}
 
 plugins:
   - serverless-iam-roles-per-function
