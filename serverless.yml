@@ -86,5 +86,125 @@ resources:
           - Key: Name
             Value: ${self:service}-private-subnet-2-${self:provider.stage}
 
+    # Route Table for Public Subnets
+    PublicRouteTable:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId: !Ref MainVPC
+        Tags:
+          - Key: Name
+            Value: ${self:service}-public-rt-${self:provider.stage}
+    
+    # Default Route for Public Route Table
+    PublicRoute:
+      Type: AWS::EC2::Route
+      DependsOn: InternetGatewayAttachment
+      Properties:
+        RouteTableId: !Ref PublicRouteTable
+        DestinationCidrBlock: 0.0.0.0/0
+        GatewayId: !Ref InternetGateway
+    
+    # Associate Public Subnet 1 with Public Route Table
+    PublicSubnet1RouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId: !Ref PublicSubnet1
+        RouteTableId: !Ref PublicRouteTable
+    
+    # Associate Public Subnet 2 with Public Route Table
+    PublicSubnet2RouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId: !Ref PublicSubnet2
+        RouteTableId: !Ref PublicRouteTable
+    
+    # Elastic IP for NAT Gateway 1
+    NatGateway1EIP:
+      Type: AWS::EC2::EIP
+      DependsOn: InternetGatewayAttachment
+      Properties:
+        Domain: vpc
+        Tags:
+          - Key: Name
+            Value: ${self:service}-nat1-eip-${self:provider.stage}
+    
+    # NAT Gateway 1 in Public Subnet 1
+    NatGateway1:
+      Type: AWS::EC2::NatGateway
+      Properties:
+        AllocationId: !GetAtt NatGateway1EIP.AllocationId
+        SubnetId: !Ref PublicSubnet1
+        Tags:
+          - Key: Name
+            Value: ${self:service}-nat1-${self:provider.stage}
+    
+    # Elastic IP for NAT Gateway 2
+    NatGateway2EIP:
+      Type: AWS::EC2::EIP
+      DependsOn: InternetGatewayAttachment
+      Properties:
+        Domain: vpc
+        Tags:
+          - Key: Name
+            Value: ${self:service}-nat2-eip-${self:provider.stage}
+    
+    # NAT Gateway 2 in Public Subnet 2
+    NatGateway2:
+      Type: AWS::EC2::NatGateway
+      Properties:
+        AllocationId: !GetAtt NatGateway2EIP.AllocationId
+        SubnetId: !Ref PublicSubnet2
+        Tags:
+          - Key: Name
+            Value: ${self:service}-nat2-${self:provider.stage}
+    
+    # Route Table for Private Subnet 1
+    PrivateRouteTable1:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId: !Ref MainVPC
+        Tags:
+          - Key: Name
+            Value: ${self:service}-private-rt1-${self:provider.stage}
+    
+    # Default Route for Private Route Table 1
+    PrivateRoute1:
+      Type: AWS::EC2::Route
+      Properties:
+        RouteTableId: !Ref PrivateRouteTable1
+        DestinationCidrBlock: 0.0.0.0/0
+        NatGatewayId: !Ref NatGateway1
+    
+    # Associate Private Subnet 1 with Private Route Table 1
+    PrivateSubnet1RouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId: !Ref PrivateSubnet1
+        RouteTableId: !Ref PrivateRouteTable1
+    
+    # Route Table for Private Subnet 2
+    PrivateRouteTable2:
+      Type: AWS::EC2::RouteTable
+      Properties:
+        VpcId: !Ref MainVPC
+        Tags:
+          - Key: Name
+            Value: ${self:service}-private-rt2-${self:provider.stage}
+    
+    # Default Route for Private Route Table 2
+    PrivateRoute2:
+      Type: AWS::EC2::Route
+      Properties:
+        RouteTableId: !Ref PrivateRouteTable2
+        DestinationCidrBlock: 0.0.0.0/0
+        NatGatewayId: !Ref NatGateway2
+    
+    # Associate Private Subnet 2 with Private Route Table 2
+    PrivateSubnet2RouteTableAssociation:
+      Type: AWS::EC2::SubnetRouteTableAssociation
+      Properties:
+        SubnetId: !Ref PrivateSubnet2
+        RouteTableId: !Ref PrivateRouteTable2
+
 plugins:
   - serverless-iam-roles-per-function

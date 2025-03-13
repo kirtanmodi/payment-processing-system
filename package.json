@@ -4,7 +4,10 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "deploy": "serverless deploy --stage dev --aws-profile payrix",
+    "remove": "serverless remove --stage dev --aws-profile payrix",
+    "offline": "serverless offline start --stage dev --aws-profile payrix"
   },
   "keywords": [],
   "author": "",
