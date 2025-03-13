@@ -313,7 +313,7 @@ resources:
         SubnetId: !Ref PrivateSubnet2
         RouteTableId: !Ref PrivateRouteTable2
     
-    # Security Group for Lambda Functions
+    # Security Group for Lambda Functions to connect to Aurora
     LambdaSecurityGroup:
       Type: AWS::EC2::SecurityGroup
       Properties:
@@ -332,7 +332,7 @@ resources:
           - Key: Name
             Value: ${self:service}-lambda-sg-${self:provider.stage}
     
-    # Security Group for Aurora Database
+    # Security Group for Aurora Database to allow inbound traffic from Lambda
     DatabaseSecurityGroup:
       Type: AWS::EC2::SecurityGroup
       Properties:
@@ -342,7 +342,7 @@ resources:
           - Key: Name
             Value: ${self:service}-db-sg-${self:provider.stage}
 
-    # Database from Lambda Ingress Rule
+    # Database from Lambda Ingress Rule to allow inbound traffic from Lambda
     DbFromLambdaIngressRule:
       Type: AWS::EC2::SecurityGroupIngress
       Properties:
@@ -352,7 +352,7 @@ resources:
         ToPort: 5432
         SourceSecurityGroupId: !Ref LambdaSecurityGroup
     
-    # DB Subnet Group for Aurora
+    # DB Subnet Group for Aurora to connect to the database
     DBSubnetGroup:
       Type: AWS::RDS::DBSubnetGroup
       Properties:
