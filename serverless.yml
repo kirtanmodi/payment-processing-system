@@ -205,6 +205,143 @@ resources:
       Properties:
         SubnetId: !Ref PrivateSubnet2
         RouteTableId: !Ref PrivateRouteTable2
+        
+    # Security Group for Application Load Balancer
+    LoadBalancerSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Security group for the application load balancer
+        VpcId: !Ref MainVPC
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 80
+            ToPort: 80
+            CidrIp: 0.0.0.0/0
+          - IpProtocol: tcp
+            FromPort: 443
+            ToPort: 443
+            CidrIp: 0.0.0.0/0
+        Tags:
+          - Key: Name
+            Value: ${self:service}-alb-sg-${self:provider.stage}
+    
+    # Security Group for API Gateway VPC Link
+    ApiGatewaySecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Security group for API Gateway VPC Link
+        VpcId: !Ref MainVPC
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 443
+            ToPort: 443
+            CidrIp: 0.0.0.0/0
+        Tags:
+          - Key: Name
+            Value: ${self:service}-api-sg-${self:provider.stage}
+    
+    # Security Group for Fargate Tasks - Removed the circular reference
+    FargateTaskSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Security group for Fargate tasks
+        VpcId: !Ref MainVPC
+        SecurityGroupIngress:
+          - IpProtocol: tcp
+            FromPort: 3000
+            ToPort: 3000
+            SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+        SecurityGroupEgress:
+          - IpProtocol: tcp
+            FromPort: 443
+            ToPort: 443
+            CidrIp: 0.0.0.0/0
+          # Removed database reference from here
+        Tags:
+          - Key: Name
+            Value: ${self:service}-fargate-sg-${self:provider.stage}
+    
+    # Security Group for Aurora Database - Removed the circular reference
+    DatabaseSecurityGroup:
+      Type: AWS::EC2::SecurityGroup
+      Properties:
+        GroupDescription: Security group for Aurora database
+        VpcId: !Ref MainVPC
+        Tags:
+          - Key: Name
+            Value: ${self:service}-db-sg-${self:provider.stage}
+    
+    # Fargate to DB Egress Rule
+    FargateToDbEgressRule:
+      Type: AWS::EC2::SecurityGroupEgress
+      Properties:
+        GroupId: !Ref FargateTaskSecurityGroup
+        IpProtocol: tcp
+        FromPort: 3306
+        ToPort: 3306
+        DestinationSecurityGroupId: !Ref DatabaseSecurityGroup
+
+    # DB to Fargate Ingress Rule
+    DbFromFargateIngressRule:
+      Type: AWS::EC2::SecurityGroupIngress
+      Properties:
+        GroupId: !Ref DatabaseSecurityGroup
+        IpProtocol: tcp
+        FromPort: 3306
+        ToPort: 3306
+        SourceSecurityGroupId: !Ref FargateTaskSecurityGroup
+    
+    # Application Load Balancer
+    ApplicationLoadBalancer:
+      Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+      Properties:
+        Name: ${self:service}-alb-${self:provider.stage}
+        Scheme: internet-facing
+        Type: application
+        SecurityGroups:
+          - !Ref LoadBalancerSecurityGroup
+        Subnets:
+          - !Ref PublicSubnet1
+          - !Ref PublicSubnet2
+        IpAddressType: ipv4
+        Tags:
+          - Key: Name
+            Value: ${self:service}-alb-${self:provider.stage}
+    
+    # Default ALB Target Group
+    DefaultTargetGroup:
+      Type: AWS::ElasticLoadBalancingV2::TargetGroup
+      Properties:
+        Name: ${self:service}-tg-${self:provider.stage}
+        VpcId: !Ref MainVPC
+        Port: 3000
+        Protocol: HTTP
+        TargetType: ip
+        HealthCheckEnabled: true
+        HealthCheckIntervalSeconds: 30
+        HealthCheckPath: /health
+        HealthCheckPort: traffic-port
+        HealthCheckProtocol: HTTP
+        HealthCheckTimeoutSeconds: 5
+        HealthyThresholdCount: 2
+        UnhealthyThresholdCount: 3
+        TargetGroupAttributes:
+          - Key: deregistration_delay.timeout_seconds
+            Value: '30'
+        Tags:
+          - Key: Name
+            Value: ${self:service}-tg-${self:provider.stage}
+    
+    # HTTP Listener for ALB
+    HttpListener:
+      Type: AWS::ElasticLoadBalancingV2::Listener
+      Properties:
+        LoadBalancerArn: !Ref ApplicationLoadBalancer
+        Port: 80
+        Protocol: HTTP
+        DefaultActions:
+          - Type: forward
+            TargetGroupArn: !Ref DefaultTargetGroup
 
 plugins:
   - serverless-iam-roles-per-function
