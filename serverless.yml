@@ -703,6 +703,108 @@ resources:
               ResponseCode: 200
               ResponsePagePath: /index.html
               ErrorCachingMinTTL: 10
+
+    # VPC Link for API Gateway to connect to the private ALB
+    HttpApiVpcLink:
+      Type: AWS::ApiGatewayV2::VpcLink
+      Properties:
+        Name: ${self:service}-http-vpc-link-${self:provider.stage}
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+        SecurityGroupIds:
+          - !Ref ApiGatewaySecurityGroup
+
+    # HTTP API
+    HttpApi:
+      Type: AWS::ApiGatewayV2::Api
+      Properties:
+        Name: ${self:service}-http-api-${self:provider.stage}
+        ProtocolType: HTTP
+        Description: HTTP API for Payment Processing System
+        DisableExecuteApiEndpoint: false
+        Tags:
+          Name: ${self:service}-http-api-${self:provider.stage}
+        CorsConfiguration:
+          AllowOrigins:
+            - '*' # change to your frontend domain
+          AllowMethods:
+            - GET
+            - POST
+            - PUT
+            - DELETE
+            - OPTIONS
+          AllowHeaders:
+            - Content-Type
+            - Authorization
+            - X-Amz-Date
+            - X-Api-Key
+            - X-Amz-Security-Token
+          MaxAge: 300
+
+    # Integration with ALB
+    HttpApiIntegration:
+      Type: AWS::ApiGatewayV2::Integration
+      Properties:
+        ApiId: !Ref HttpApi
+        IntegrationType: HTTP_PROXY
+        IntegrationMethod: ANY
+        IntegrationUri: !GetAtt HttpListener.ListenerArn
+        ConnectionType: VPC_LINK
+        ConnectionId: !Ref HttpApiVpcLink
+        PayloadFormatVersion: '1.0'
+        TimeoutInMillis: 30000
+
+    # Routes for each endpoint
+    HealthCheckRoute:
+      Type: AWS::ApiGatewayV2::Route
+      Properties:
+        ApiId: !Ref HttpApi
+        RouteKey: 'GET /health'
+        Target: !Join ['/', ['integrations', !Ref HttpApiIntegration]]
+
+    GetPaymentsRoute:
+      Type: AWS::ApiGatewayV2::Route
+      Properties:
+        ApiId: !Ref HttpApi
+        RouteKey: 'GET /api/payments'
+        Target: !Join ['/', ['integrations', !Ref HttpApiIntegration]]
+
+    CreatePaymentRoute:
+      Type: AWS::ApiGatewayV2::Route
+      Properties:
+        ApiId: !Ref HttpApi
+        RouteKey: 'POST /api/payments'
+        Target: !Join ['/', ['integrations', !Ref HttpApiIntegration]]
+
+    GetPaymentByIdRoute:
+      Type: AWS::ApiGatewayV2::Route
+      Properties:
+        ApiId: !Ref HttpApi
+        RouteKey: 'GET /api/payments/{id}'
+        Target: !Join ['/', ['integrations', !Ref HttpApiIntegration]]
+
+    UpdatePaymentStatusRoute:
+      Type: AWS::ApiGatewayV2::Route
+      Properties:
+        ApiId: !Ref HttpApi
+        RouteKey: 'PUT /api/payments/{id}/status'
+        Target: !Join ['/', ['integrations', !Ref HttpApiIntegration]]
+
+    # API Stage
+    HttpApiStage:
+      Type: AWS::ApiGatewayV2::Stage
+      Properties:
+        ApiId: !Ref HttpApi
+        StageName: ${self:provider.stage}
+        AutoDeploy: true
+        Description: ${self:provider.stage} stage
+        DefaultRouteSettings:
+          ThrottlingBurstLimit: 20
+          ThrottlingRateLimit: 10
+        Tags:
+          Name: ${self:service}-http-stage-${self:provider.stage}
+
 # Outputs
 outputs:
   CloudFrontDistributionId:
@@ -711,6 +813,16 @@ outputs:
   CloudFrontDomainName:
     Description: "CloudFront Distribution Domain Name"
     Value: !GetAtt CloudFrontDistribution.DomainName
+  HttpApiUrl:
+    Description: "HTTP API Gateway Endpoint URL"
+    Value: !Join 
+      - ''
+      - - !GetAtt HttpApi.ApiEndpoint
+        - '/'
+        - ${self:provider.stage}
+  HttpApiId:
+    Description: "HTTP API Gateway ID"
+    Value: !Ref HttpApi
 
 plugins:
   - serverless-iam-roles-per-function
