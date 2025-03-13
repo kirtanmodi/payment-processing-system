@@ -6,13 +6,116 @@ provider:
   profile: payrix
   region: us-east-1
   stage: ${opt:stage, 'dev'}
+  # Lambda Functions will run in the VPC for security
+  vpc:
+    securityGroupIds:
+      - !Ref LambdaSecurityGroup
+    subnetIds:
+      - !Ref PrivateSubnet1
+      - !Ref PrivateSubnet2
+  # Global environment variables for all functions
+  environment:
+    NODE_ENV: ${self:provider.stage}
 
-custom:
-  ecrRepository: "575108919661.dkr.ecr.us-east-1.amazonaws.com/payment-node-app"
-  imageTag: "dev"
-
+# Define Lambda functions for payment processing
 functions:
-  # We'll define functions here later
+  # Health check function
+  healthCheck:
+    handler: src/handlers/health.handler
+    description: Health check endpoint
+    events:
+      - httpApi:
+          path: /health
+          method: GET
+  
+  # Get all payments function
+  getAllPayments:
+    handler: src/handlers/payments.getAll
+    description: Get all payments
+    environment:
+      DB_HOST: !GetAtt AuroraCluster.Endpoint.Address
+      DB_PORT: '5432'
+      DB_NAME: payrix
+      DB_USERNAME: !Join ['', ['{{resolve:secretsmanager:', !Ref DatabaseSecret, ':SecretString:username}}' ]]
+      DB_PASSWORD: !Join ['', ['{{resolve:secretsmanager:', !Ref DatabaseSecret, ':SecretString:password}}' ]]
+    events:
+      - httpApi:
+          path: /api/payments
+          method: GET
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - secretsmanager:GetSecretValue
+        Resource: !Ref DatabaseSecret
+  
+  # Get payment by ID function
+  getPaymentById:
+    handler: src/handlers/payments.getById
+    description: Get payment by ID
+    environment:
+      DB_HOST: !GetAtt AuroraCluster.Endpoint.Address
+      DB_PORT: '5432'
+      DB_NAME: payrix
+      DB_USERNAME: !Join ['', ['{{resolve:secretsmanager:', !Ref DatabaseSecret, ':SecretString:username}}' ]]
+      DB_PASSWORD: !Join ['', ['{{resolve:secretsmanager:', !Ref DatabaseSecret, ':SecretString:password}}' ]]
+    events:
+      - httpApi:
+          path: /api/payments/{id}
+          method: GET
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - secretsmanager:GetSecretValue
+        Resource: !Ref DatabaseSecret
+  
+  # Create payment function
+  createPayment:
+    handler: src/handlers/payments.create
+    description: Create a new payment
+    environment:
+      DB_HOST: !GetAtt AuroraCluster.Endpoint.Address
+      DB_PORT: '5432'
+      DB_NAME: payrix
+      DB_USERNAME: !Join ['', ['{{resolve:secretsmanager:', !Ref DatabaseSecret, ':SecretString:username}}' ]]
+      DB_PASSWORD: !Join ['', ['{{resolve:secretsmanager:', !Ref DatabaseSecret, ':SecretString:password}}' ]]
+    events:
+      - httpApi:
+          path: /api/payments
+          method: POST
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - secretsmanager:GetSecretValue
+        Resource: !Ref DatabaseSecret
+      
+  # Update payment status function
+  updatePaymentStatus:
+    handler: src/handlers/payments.updateStatus
+    description: Update payment status
+    environment:
+      DB_HOST: !GetAtt AuroraCluster.Endpoint.Address
+      DB_PORT: '5432'
+      DB_NAME: payrix
+      DB_USERNAME: !Join ['', ['{{resolve:secretsmanager:', !Ref DatabaseSecret, ':SecretString:username}}' ]]
+      DB_PASSWORD: !Join ['', ['{{resolve:secretsmanager:', !Ref DatabaseSecret, ':SecretString:password}}' ]]
+    events:
+      - httpApi:
+          path: /api/payments/{id}/status
+          method: PUT
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - secretsmanager:GetSecretValue
+        Resource: !Ref DatabaseSecret
+
+# Plugin configuration
+plugins:
+  - serverless-iam-roles-per-function
+
+# Custom variables
+custom:
+  httpApi:
+    cors: true
 
 resources:
   Resources:
@@ -209,60 +312,25 @@ resources:
       Properties:
         SubnetId: !Ref PrivateSubnet2
         RouteTableId: !Ref PrivateRouteTable2
-        
-    # Security Group for Application Load Balancer
-    LoadBalancerSecurityGroup:
-      Type: AWS::EC2::SecurityGroup
-      Properties:
-        GroupDescription: Security group for the application load balancer
-        VpcId: !Ref MainVPC
-        SecurityGroupIngress:
-          - IpProtocol: tcp
-            FromPort: 80
-            ToPort: 80
-            CidrIp: 0.0.0.0/0
-          - IpProtocol: tcp
-            FromPort: 443
-            ToPort: 443
-            CidrIp: 0.0.0.0/0
-        Tags:
-          - Key: Name
-            Value: ${self:service}-alb-sg-${self:provider.stage}
     
-    # Security Group for API Gateway VPC Link
-    ApiGatewaySecurityGroup:
+    # Security Group for Lambda Functions
+    LambdaSecurityGroup:
       Type: AWS::EC2::SecurityGroup
       Properties:
-        GroupDescription: Security group for API Gateway VPC Link
+        GroupDescription: Security group for Lambda functions
         VpcId: !Ref MainVPC
-        SecurityGroupIngress:
-          - IpProtocol: tcp
-            FromPort: 443
-            ToPort: 443
-            CidrIp: 0.0.0.0/0
-        Tags:
-          - Key: Name
-            Value: ${self:service}-api-sg-${self:provider.stage}
-    
-    # Security Group for Fargate Tasks
-    FargateTaskSecurityGroup:
-      Type: AWS::EC2::SecurityGroup
-      Properties:
-        GroupDescription: Security group for Fargate tasks
-        VpcId: !Ref MainVPC
-        SecurityGroupIngress:
-          - IpProtocol: tcp
-            FromPort: 3000
-            ToPort: 3000
-            SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
         SecurityGroupEgress:
           - IpProtocol: tcp
             FromPort: 443
             ToPort: 443
             CidrIp: 0.0.0.0/0
+          - IpProtocol: tcp
+            FromPort: 5432
+            ToPort: 5432
+            DestinationSecurityGroupId: !Ref DatabaseSecurityGroup
         Tags:
           - Key: Name
-            Value: ${self:service}-fargate-sg-${self:provider.stage}
+            Value: ${self:service}-lambda-sg-${self:provider.stage}
     
     # Security Group for Aurora Database
     DatabaseSecurityGroup:
@@ -273,78 +341,16 @@ resources:
         Tags:
           - Key: Name
             Value: ${self:service}-db-sg-${self:provider.stage}
-    
-    # Fargate to DB Egress Rule
-    FargateToDbEgressRule:
-      Type: AWS::EC2::SecurityGroupEgress
-      Properties:
-        GroupId: !Ref FargateTaskSecurityGroup
-        IpProtocol: tcp
-        FromPort: 5432
-        ToPort: 5432
-        DestinationSecurityGroupId: !Ref DatabaseSecurityGroup
 
-    # DB to Fargate Ingress Rule
-    DbFromFargateIngressRule:
+    # Database from Lambda Ingress Rule
+    DbFromLambdaIngressRule:
       Type: AWS::EC2::SecurityGroupIngress
       Properties:
         GroupId: !Ref DatabaseSecurityGroup
         IpProtocol: tcp
         FromPort: 5432
         ToPort: 5432
-        SourceSecurityGroupId: !Ref FargateTaskSecurityGroup
-    
-    # Application Load Balancer with shorter name
-    ApplicationLoadBalancer:
-      Type: AWS::ElasticLoadBalancingV2::LoadBalancer
-      Properties:
-        Name: payrix-alb-${self:provider.stage}
-        Scheme: internet-facing
-        Type: application
-        SecurityGroups:
-          - !Ref LoadBalancerSecurityGroup
-        Subnets:
-          - !Ref PublicSubnet1
-          - !Ref PublicSubnet2
-        IpAddressType: ipv4
-        Tags:
-          - Key: Name
-            Value: payrix-alb-${self:provider.stage}
-    
-    # Default ALB Target Group with shorter name
-    DefaultTargetGroup:
-      Type: AWS::ElasticLoadBalancingV2::TargetGroup
-      Properties:
-        Name: payrix-tg-${self:provider.stage}
-        VpcId: !Ref MainVPC
-        Port: 3000
-        Protocol: HTTP
-        TargetType: ip
-        HealthCheckEnabled: true
-        HealthCheckIntervalSeconds: 30
-        HealthCheckPath: /health
-        HealthCheckPort: traffic-port
-        HealthCheckProtocol: HTTP
-        HealthCheckTimeoutSeconds: 5
-        HealthyThresholdCount: 2
-        UnhealthyThresholdCount: 3
-        TargetGroupAttributes:
-          - Key: deregistration_delay.timeout_seconds
-            Value: '30'
-        Tags:
-          - Key: Name
-            Value: payrix-tg-${self:provider.stage}
-    
-    # HTTP Listener for ALB
-    HttpListener:
-      Type: AWS::ElasticLoadBalancingV2::Listener
-      Properties:
-        LoadBalancerArn: !Ref ApplicationLoadBalancer
-        Port: 80
-        Protocol: HTTP
-        DefaultActions:
-          - Type: forward
-            TargetGroupArn: !Ref DefaultTargetGroup
+        SourceSecurityGroupId: !Ref LambdaSecurityGroup
     
     # DB Subnet Group for Aurora
     DBSubnetGroup:
@@ -429,166 +435,52 @@ resources:
         Tags:
           - Key: Name
             Value: ${self:service}-aurora-instance1-${self:provider.stage}
-
-    # ECS Cluster
-    ECSCluster:
-      Type: AWS::ECS::Cluster
+            
+    # HTTP API
+    HttpApi:
+      Type: AWS::ApiGatewayV2::Api
       Properties:
-        ClusterName: ${self:service}-cluster-${self:provider.stage}
-        CapacityProviders:
-          - FARGATE
-          - FARGATE_SPOT
-        DefaultCapacityProviderStrategy:
-          - CapacityProvider: FARGATE
-            Weight: 1
+        Name: ${self:service}-http-api-${self:provider.stage}
+        ProtocolType: HTTP
+        Description: HTTP API for Payment Processing System
+        CorsConfiguration:
+          AllowCredentials: true
+          AllowHeaders:
+            - Content-Type
+            - X-Amz-Date
+            - Authorization
+            - X-Api-Key
+          AllowMethods:
+            - GET
+            - POST
+            - PUT
+            - OPTIONS
+          AllowOrigins:
+            - https://your-frontend-domain.com
+          MaxAge: 300
         Tags:
-          - Key: Name
-            Value: ${self:service}-cluster-${self:provider.stage}
-
-    # IAM Role for ECS Task Execution
-    ECSTaskExecutionRole:
-      Type: AWS::IAM::Role
+          Name: ${self:service}-http-api-${self:provider.stage}
+    
+    # API Stage
+    HttpApiStage:
+      Type: AWS::ApiGatewayV2::Stage
       Properties:
-        AssumeRolePolicyDocument:
-          Version: '2012-10-17'
-          Statement:
-            - Effect: Allow
-              Principal:
-                Service: ecs-tasks.amazonaws.com
-              Action: sts:AssumeRole
-        ManagedPolicyArns:
-          - arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy
-        Policies:
-          - PolicyName: SecretsManagerAccess
-            PolicyDocument:
-              Version: '2012-10-17'
-              Statement:
-                - Effect: Allow
-                  Action:
-                    - secretsmanager:GetSecretValue
-                  Resource: !Ref DatabaseSecret
+        ApiId: !Ref HttpApi
+        StageName: ${self:provider.stage}
+        AutoDeploy: true
+        Description: ${self:provider.stage} stage
+        DefaultRouteSettings:
+          ThrottlingBurstLimit: 20
+          ThrottlingRateLimit: 10
         Tags:
-          - Key: Name
-            Value: ${self:service}-task-execution-role-${self:provider.stage}
+          Name: ${self:service}-http-stage-${self:provider.stage}
 
-    # IAM Role for ECS Task
-    ECSTaskRole:
-      Type: AWS::IAM::Role
-      Properties:
-        AssumeRolePolicyDocument:
-          Version: '2012-10-17'
-          Statement:
-            - Effect: Allow
-              Principal:
-                Service: ecs-tasks.amazonaws.com
-              Action: sts:AssumeRole
-        Policies:
-          - PolicyName: TaskPermissions
-            PolicyDocument:
-              Version: '2012-10-17'
-              Statement:
-                - Effect: Allow
-                  Action:
-                    - logs:CreateLogGroup
-                    - logs:CreateLogStream
-                    - logs:PutLogEvents
-                  Resource: '*'
-        Tags:
-          - Key: Name
-            Value: ${self:service}-task-role-${self:provider.stage}
-
-    # CloudWatch Log Group for ECS Tasks
-    ECSLogGroup:
+    # CloudWatch Log Group for Lambdas
+    ApiLogGroup:
       Type: AWS::Logs::LogGroup
       Properties:
-        LogGroupName: /ecs/${self:service}-${self:provider.stage}
-        RetentionInDays: 14
-
-    # ECS Task Definition
-    PaymentProcessingTaskDefinition:
-      Type: AWS::ECS::TaskDefinition
-      Properties:
-        Family: ${self:service}-task-${self:provider.stage}
-        Cpu: '256'
-        Memory: '512'
-        NetworkMode: awsvpc
-        RequiresCompatibilities:
-          - FARGATE
-        ExecutionRoleArn: !GetAtt ECSTaskExecutionRole.Arn
-        TaskRoleArn: !GetAtt ECSTaskRole.Arn
-        ContainerDefinitions:
-          - Name: payment-app
-            Image: ${self:custom.ecrRepository}:${self:custom.imageTag}
-            Essential: true
-            PortMappings:
-              - ContainerPort: 3000
-                HostPort: 3000
-                Protocol: tcp
-            LogConfiguration:
-              LogDriver: awslogs
-              Options:
-                awslogs-group: !Ref ECSLogGroup
-                awslogs-region: !Ref AWS::Region
-                awslogs-stream-prefix: payment-app
-            Environment:
-              - Name: NODE_ENV
-                Value: ${self:provider.stage}
-              - Name: PORT
-                Value: '3000'
-              - Name: DB_HOST
-                Value: !GetAtt AuroraCluster.Endpoint.Address
-              - Name: DB_PORT
-                Value: '5432'
-              - Name: DB_NAME
-                Value: payrix
-              - Name: DB_USERNAME
-                Value: !Join ['', ['{{resolve:secretsmanager:', !Ref DatabaseSecret, ':SecretString:username}}' ]]
-            Secrets:
-              - Name: DB_PASSWORD
-                ValueFrom: !Join ['', [!Ref DatabaseSecret, ':password::'] ]
-        Tags:
-          - Key: Name
-            Value: ${self:service}-task-${self:provider.stage}
-
-    # ECS Service
-    PaymentProcessingService:
-      Type: AWS::ECS::Service
-      DependsOn: HttpListener
-      Properties:
-        ServiceName: ${self:service}-service-${self:provider.stage}
-        Cluster: !Ref ECSCluster
-        TaskDefinition: !Ref PaymentProcessingTaskDefinition
-        DesiredCount: 2
-        LaunchType: FARGATE
-        DeploymentConfiguration:
-          MaximumPercent: 200
-          MinimumHealthyPercent: 100
-          DeploymentCircuitBreaker:
-            Enable: true
-            Rollback: true
-        NetworkConfiguration:
-          AwsvpcConfiguration:
-            AssignPublicIp: DISABLED
-            SecurityGroups:
-              - !Ref FargateTaskSecurityGroup
-            Subnets:
-              - !Ref PrivateSubnet1
-              - !Ref PrivateSubnet2
-        LoadBalancers:
-          - ContainerName: payment-app
-            ContainerPort: 3000
-            TargetGroupArn: !Ref DefaultTargetGroup
-        HealthCheckGracePeriodSeconds: 60
-        Tags:
-          - Key: Name
-            Value: ${self:service}-service-${self:provider.stage}
-
-    # CloudFront Origin Access Identity for S3
-    CloudFrontOriginAccessIdentity:
-      Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
-      Properties:
-        CloudFrontOriginAccessIdentityConfig:
-          Comment: "Origin Access Identity for payment processing static content"
+        LogGroupName: /aws/lambda/${self:service}-${self:provider.stage}
+        RetentionInDays: 30
 
     # S3 Bucket for static content
     StaticContentBucket:
@@ -609,6 +501,13 @@ resources:
           - Key: Name
             Value: ${self:service}-static-${self:provider.stage}
 
+    # CloudFront Origin Access Identity for S3
+    CloudFrontOriginAccessIdentity:
+      Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+      Properties:
+        CloudFrontOriginAccessIdentityConfig:
+          Comment: "Origin Access Identity for payment processing static content"
+
     # S3 Bucket Policy to allow CloudFront access
     StaticContentBucketPolicy:
       Type: AWS::S3::BucketPolicy
@@ -622,6 +521,7 @@ resources:
               Principal:
                 AWS: !Join ['', ['arn:aws:iam::cloudfront:user/CloudFront Origin Access Identity ', !Ref CloudFrontOriginAccessIdentity]]
 
+    # CloudFront Distribution for static content and API
     CloudFrontDistribution:
       Type: AWS::CloudFront::Distribution
       Properties:
@@ -638,17 +538,18 @@ resources:
               DomainName: !GetAtt StaticContentBucket.RegionalDomainName
               S3OriginConfig:
                 OriginAccessIdentity: !Join ['', ['origin-access-identity/cloudfront/', !Ref CloudFrontOriginAccessIdentity]]
-            # Load Balancer Origin for API calls
-            - Id: ALBOrigin
-              DomainName: !GetAtt ApplicationLoadBalancer.DNSName
+            # API Gateway Origin for API calls
+            - Id: ApiOrigin
+              DomainName: !Sub "${HttpApi}.execute-api.${AWS::Region}.amazonaws.com"
               CustomOriginConfig:
                 HTTPPort: 80
                 HTTPSPort: 443
-                OriginProtocolPolicy: http-only
+                OriginProtocolPolicy: https-only
                 OriginSSLProtocols:
                   - TLSv1.2
                 OriginReadTimeout: 30
                 OriginKeepaliveTimeout: 5
+              OriginPath: /${self:provider.stage}
           DefaultCacheBehavior:
             TargetOriginId: S3Origin
             ViewerProtocolPolicy: redirect-to-https
@@ -670,7 +571,7 @@ resources:
             MaxTTL: 31536000     # 1 year
           CacheBehaviors:
             - PathPattern: /api/*
-              TargetOriginId: ALBOrigin
+              TargetOriginId: ApiOrigin
               ViewerProtocolPolicy: redirect-to-https
               AllowedMethods:
                 - DELETE
@@ -704,125 +605,17 @@ resources:
               ResponsePagePath: /index.html
               ErrorCachingMinTTL: 10
 
-    # VPC Link for API Gateway to connect to the private ALB
-    HttpApiVpcLink:
-      Type: AWS::ApiGatewayV2::VpcLink
-      Properties:
-        Name: ${self:service}-http-vpc-link-${self:provider.stage}
-        SubnetIds:
-          - !Ref PrivateSubnet1
-          - !Ref PrivateSubnet2
-        SecurityGroupIds:
-          - !Ref ApiGatewaySecurityGroup
-
-    # HTTP API
-    HttpApi:
-      Type: AWS::ApiGatewayV2::Api
-      Properties:
-        Name: ${self:service}-http-api-${self:provider.stage}
-        ProtocolType: HTTP
-        Description: HTTP API for Payment Processing System
-        DisableExecuteApiEndpoint: false
-        Tags:
-          Name: ${self:service}-http-api-${self:provider.stage}
-        CorsConfiguration:
-          AllowOrigins:
-            - '*' # change to your frontend domain
-          AllowMethods:
-            - GET
-            - POST
-            - PUT
-            - DELETE
-            - OPTIONS
-          AllowHeaders:
-            - Content-Type
-            - Authorization
-            - X-Amz-Date
-            - X-Api-Key
-            - X-Amz-Security-Token
-          MaxAge: 300
-
-    # Integration with ALB
-    HttpApiIntegration:
-      Type: AWS::ApiGatewayV2::Integration
-      Properties:
-        ApiId: !Ref HttpApi
-        IntegrationType: HTTP_PROXY
-        IntegrationMethod: ANY
-        IntegrationUri: !GetAtt HttpListener.ListenerArn
-        ConnectionType: VPC_LINK
-        ConnectionId: !Ref HttpApiVpcLink
-        PayloadFormatVersion: '1.0'
-        TimeoutInMillis: 30000
-
-    # Routes for each endpoint
-    HealthCheckRoute:
-      Type: AWS::ApiGatewayV2::Route
-      Properties:
-        ApiId: !Ref HttpApi
-        RouteKey: 'GET /health'
-        Target: !Join ['/', ['integrations', !Ref HttpApiIntegration]]
-
-    GetPaymentsRoute:
-      Type: AWS::ApiGatewayV2::Route
-      Properties:
-        ApiId: !Ref HttpApi
-        RouteKey: 'GET /api/payments'
-        Target: !Join ['/', ['integrations', !Ref HttpApiIntegration]]
-
-    CreatePaymentRoute:
-      Type: AWS::ApiGatewayV2::Route
-      Properties:
-        ApiId: !Ref HttpApi
-        RouteKey: 'POST /api/payments'
-        Target: !Join ['/', ['integrations', !Ref HttpApiIntegration]]
-
-    GetPaymentByIdRoute:
-      Type: AWS::ApiGatewayV2::Route
-      Properties:
-        ApiId: !Ref HttpApi
-        RouteKey: 'GET /api/payments/{id}'
-        Target: !Join ['/', ['integrations', !Ref HttpApiIntegration]]
-
-    UpdatePaymentStatusRoute:
-      Type: AWS::ApiGatewayV2::Route
-      Properties:
-        ApiId: !Ref HttpApi
-        RouteKey: 'PUT /api/payments/{id}/status'
-        Target: !Join ['/', ['integrations', !Ref HttpApiIntegration]]
-
-    # API Stage
-    HttpApiStage:
-      Type: AWS::ApiGatewayV2::Stage
-      Properties:
-        ApiId: !Ref HttpApi
-        StageName: ${self:provider.stage}
-        AutoDeploy: true
-        Description: ${self:provider.stage} stage
-        DefaultRouteSettings:
-          ThrottlingBurstLimit: 20
-          ThrottlingRateLimit: 10
-        Tags:
-          Name: ${self:service}-http-stage-${self:provider.stage}
-
-# Outputs
-outputs:
-  CloudFrontDistributionId:
-    Description: "CloudFront Distribution ID"
-    Value: !Ref CloudFrontDistribution
-  CloudFrontDomainName:
-    Description: "CloudFront Distribution Domain Name"
-    Value: !GetAtt CloudFrontDistribution.DomainName
-  HttpApiUrl:
-    Description: "HTTP API Gateway Endpoint URL"
-    Value: !Join 
-      - ''
-      - - !GetAtt HttpApi.ApiEndpoint
-        - '/'
-        - ${self:provider.stage}
-  HttpApiId:
-    Description: "HTTP API Gateway ID"
-    Value: !Ref HttpApi
-
-plugins:
-  - serverless-iam-roles-per-function
+  # Define outputs
+  Outputs:
+    HttpApiUrl:
+      Description: "HTTP API Gateway Endpoint URL"
+      Value: !Sub "https://${HttpApi}.execute-api.${AWS::Region}.amazonaws.com/${self:provider.stage}"
+    CloudFrontDistributionDomainName:
+      Description: "CloudFront Distribution Domain Name"
+      Value: !GetAtt CloudFrontDistribution.DomainName
+    AuroraDatabaseEndpoint:
+      Description: "Aurora Database Endpoint"
+      Value: !GetAtt AuroraCluster.Endpoint.Address
+    StaticBucketName:
+      Description: "S3 Bucket for Static Content"
+      Value: !Ref StaticContentBucket
