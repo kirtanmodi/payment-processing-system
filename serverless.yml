@@ -240,7 +240,7 @@ resources:
           - Key: Name
             Value: ${self:service}-api-sg-${self:provider.stage}
     
-    # Security Group for Fargate Tasks - Removed the circular reference
+    # Security Group for Fargate Tasks
     FargateTaskSecurityGroup:
       Type: AWS::EC2::SecurityGroup
       Properties:
@@ -260,7 +260,7 @@ resources:
           - Key: Name
             Value: ${self:service}-fargate-sg-${self:provider.stage}
     
-    # Security Group for Aurora Database - Removed the circular reference
+    # Security Group for Aurora Database
     DatabaseSecurityGroup:
       Type: AWS::EC2::SecurityGroup
       Properties:
@@ -270,23 +270,24 @@ resources:
           - Key: Name
             Value: ${self:service}-db-sg-${self:provider.stage}
     
-    # Define the rules separately to break the circular dependency
+    # Fargate to DB Egress Rule
     FargateToDbEgressRule:
       Type: AWS::EC2::SecurityGroupEgress
       Properties:
         GroupId: !Ref FargateTaskSecurityGroup
         IpProtocol: tcp
-        FromPort: 3306
-        ToPort: 3306
+        FromPort: 5432
+        ToPort: 5432
         DestinationSecurityGroupId: !Ref DatabaseSecurityGroup
-    
+
+    # DB to Fargate Ingress Rule
     DbFromFargateIngressRule:
       Type: AWS::EC2::SecurityGroupIngress
       Properties:
         GroupId: !Ref DatabaseSecurityGroup
         IpProtocol: tcp
-        FromPort: 3306
-        ToPort: 3306
+        FromPort: 5432
+        ToPort: 5432
         SourceSecurityGroupId: !Ref FargateTaskSecurityGroup
     
     # Application Load Balancer with shorter name
@@ -357,12 +358,10 @@ resources:
     DBClusterParameterGroup:
       Type: AWS::RDS::DBClusterParameterGroup
       Properties:
-        Description: Parameter group for Aurora MySQL cluster
-        Family: aurora-mysql8.0
+        Description: Parameter group for Aurora PostgreSQL cluster
+        Family: aurora-postgresql16
         Parameters:
-          character_set_server: utf8mb4
-          character_set_client: utf8mb4
-          collation_server: utf8mb4_unicode_ci
+          timezone: 'America/Chicago'  # CST timezone
         Tags:
           - Key: Name
             Value: ${self:service}-db-cluster-param-group-${self:provider.stage}
@@ -371,8 +370,8 @@ resources:
     DBInstanceParameterGroup:
       Type: AWS::RDS::DBParameterGroup
       Properties:
-        Description: Parameter group for Aurora MySQL instances
-        Family: aurora-mysql8.0
+        Description: Parameter group for Aurora PostgreSQL instances
+        Family: aurora-postgresql16
         Parameters:
           max_connections: '200'
         Tags:
@@ -386,17 +385,17 @@ resources:
         Name: ${self:service}/db/password-${self:provider.stage}
         Description: "Aurora database password"
         GenerateSecretString:
-          SecretStringTemplate: '{"username": "admin"}'
+          SecretStringTemplate: '{"username": "payrix_admin"}'
           GenerateStringKey: "password"
           PasswordLength: 16
           ExcludeCharacters: '"@/\'
     
-    # Aurora MySQL Cluster
+    # Aurora PostgreSQL Cluster
     AuroraCluster:
       Type: AWS::RDS::DBCluster
       Properties:
-        Engine: aurora-mysql
-        EngineVersion: 8.0.mysql_aurora.3.03.0
+        Engine: aurora-postgresql
+        EngineVersion: "16"
         DatabaseName: payrix
         MasterUsername: !Join ['', ['{{resolve:secretsmanager:', !Ref DatabaseSecret, ':SecretString:username}}' ]]
         MasterUserPassword: !Join ['', ['{{resolve:secretsmanager:', !Ref DatabaseSecret, ':SecretString:password}}' ]]
@@ -409,18 +408,17 @@ resources:
         PreferredMaintenanceWindow: 'sun:05:00-sun:06:00'
         StorageEncrypted: true
         DeletionProtection: false
-        EnableHttpEndpoint: false # Disable Data API for this demo
         Tags:
           - Key: Name
             Value: ${self:service}-aurora-cluster-${self:provider.stage}
     
-    # Aurora MySQL Instance 1 (Primary)
+    # Aurora PostgreSQL Instance 1 (Primary)
     AuroraInstance1:
       Type: AWS::RDS::DBInstance
       Properties:
-        Engine: aurora-mysql
+        Engine: aurora-postgresql
         DBClusterIdentifier: !Ref AuroraCluster
-        DBInstanceClass: db.t3.small
+        DBInstanceClass: db.t3.medium
         DBParameterGroupName: !Ref DBInstanceParameterGroup
         AvailabilityZone: ${self:provider.region}a
         PubliclyAccessible: false
