@@ -1,0 +1,31 @@
+service: payment-processing-system
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  profile: payrix
+  region: us-east-1
+  stage: ${opt:stage, 'dev'}
+  
+  # Enable these when needed
+  # vpc:
+  #   securityGroupIds:
+  #     - !Ref MainSecurityGroup
+  #   subnetIds:
+  #     - !Ref PrivateSubnet1
+  #     - !Ref PrivateSubnet2
+
+functions:
+  # We'll define functions here later
+
+resources:
+  # We'll define AWS resources here incrementally
+
+plugins:
+  - serverless-iam-roles-per-function
+  - serverless-webpack
+  
+custom:
+  webpack:
+    webpackConfig: ./webpack.config.js
+    includeModules: true
