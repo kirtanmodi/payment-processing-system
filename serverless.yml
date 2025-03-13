@@ -270,7 +270,7 @@ resources:
           - Key: Name
             Value: ${self:service}-db-sg-${self:provider.stage}
     
-    # Fargate to DB Egress Rule
+    # Define the rules separately to break the circular dependency
     FargateToDbEgressRule:
       Type: AWS::EC2::SecurityGroupEgress
       Properties:
@@ -279,8 +279,7 @@ resources:
         FromPort: 3306
         ToPort: 3306
         DestinationSecurityGroupId: !Ref DatabaseSecurityGroup
-
-    # DB to Fargate Ingress Rule
+    
     DbFromFargateIngressRule:
       Type: AWS::EC2::SecurityGroupIngress
       Properties:
@@ -290,7 +289,7 @@ resources:
         ToPort: 3306
         SourceSecurityGroupId: !Ref FargateTaskSecurityGroup
     
-    # Application Load Balancer
+    # Application Load Balancer with shorter name
     ApplicationLoadBalancer:
       Type: AWS::ElasticLoadBalancingV2::LoadBalancer
       Properties:
@@ -307,7 +306,7 @@ resources:
           - Key: Name
             Value: payrix-alb-${self:provider.stage}
     
-    # Default ALB Target Group
+    # Default ALB Target Group with shorter name
     DefaultTargetGroup:
       Type: AWS::ElasticLoadBalancingV2::TargetGroup
       Properties:
@@ -341,6 +340,93 @@ resources:
         DefaultActions:
           - Type: forward
             TargetGroupArn: !Ref DefaultTargetGroup
+    
+    # DB Subnet Group for Aurora
+    DBSubnetGroup:
+      Type: AWS::RDS::DBSubnetGroup
+      Properties:
+        DBSubnetGroupDescription: Subnet group for Aurora database
+        SubnetIds:
+          - !Ref PrivateSubnet1
+          - !Ref PrivateSubnet2
+        Tags:
+          - Key: Name
+            Value: ${self:service}-db-subnet-group-${self:provider.stage}
+    
+    # Aurora Parameter Group
+    DBClusterParameterGroup:
+      Type: AWS::RDS::DBClusterParameterGroup
+      Properties:
+        Description: Parameter group for Aurora MySQL cluster
+        Family: aurora-mysql8.0
+        Parameters:
+          character_set_server: utf8mb4
+          character_set_client: utf8mb4
+          collation_server: utf8mb4_unicode_ci
+        Tags:
+          - Key: Name
+            Value: ${self:service}-db-cluster-param-group-${self:provider.stage}
+    
+    # DB Instance Parameter Group
+    DBInstanceParameterGroup:
+      Type: AWS::RDS::DBParameterGroup
+      Properties:
+        Description: Parameter group for Aurora MySQL instances
+        Family: aurora-mysql8.0
+        Parameters:
+          max_connections: '200'
+        Tags:
+          - Key: Name
+            Value: ${self:service}-db-param-group-${self:provider.stage}
+    
+    # Database password stored in Secrets Manager
+    DatabaseSecret:
+      Type: AWS::SecretsManager::Secret
+      Properties:
+        Name: ${self:service}/db/password-${self:provider.stage}
+        Description: "Aurora database password"
+        GenerateSecretString:
+          SecretStringTemplate: '{"username": "admin"}'
+          GenerateStringKey: "password"
+          PasswordLength: 16
+          ExcludeCharacters: '"@/\'
+    
+    # Aurora MySQL Cluster
+    AuroraCluster:
+      Type: AWS::RDS::DBCluster
+      Properties:
+        Engine: aurora-mysql
+        EngineVersion: 8.0.mysql_aurora.3.03.0
+        DatabaseName: payrix
+        MasterUsername: !Join ['', ['{{resolve:secretsmanager:', !Ref DatabaseSecret, ':SecretString:username}}' ]]
+        MasterUserPassword: !Join ['', ['{{resolve:secretsmanager:', !Ref DatabaseSecret, ':SecretString:password}}' ]]
+        DBClusterParameterGroupName: !Ref DBClusterParameterGroup
+        DBSubnetGroupName: !Ref DBSubnetGroup
+        VpcSecurityGroupIds:
+          - !Ref DatabaseSecurityGroup
+        BackupRetentionPeriod: 7
+        PreferredBackupWindow: '03:00-04:00'
+        PreferredMaintenanceWindow: 'sun:05:00-sun:06:00'
+        StorageEncrypted: true
+        DeletionProtection: false
+        EnableHttpEndpoint: false # Disable Data API for this demo
+        Tags:
+          - Key: Name
+            Value: ${self:service}-aurora-cluster-${self:provider.stage}
+    
+    # Aurora MySQL Instance 1 (Primary)
+    AuroraInstance1:
+      Type: AWS::RDS::DBInstance
+      Properties:
+        Engine: aurora-mysql
+        DBClusterIdentifier: !Ref AuroraCluster
+        DBInstanceClass: db.t3.small
+        DBParameterGroupName: !Ref DBInstanceParameterGroup
+        AvailabilityZone: ${self:provider.region}a
+        PubliclyAccessible: false
+        Tags:
+          - Key: Name
+            Value: ${self:service}-aurora-instance1-${self:provider.stage}
 
 plugins:
   - serverless-iam-roles-per-function
