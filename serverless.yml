@@ -256,7 +256,6 @@ resources:
             FromPort: 443
             ToPort: 443
             CidrIp: 0.0.0.0/0
-          # Removed database reference from here
         Tags:
           - Key: Name
             Value: ${self:service}-fargate-sg-${self:provider.stage}
@@ -295,7 +294,7 @@ resources:
     ApplicationLoadBalancer:
       Type: AWS::ElasticLoadBalancingV2::LoadBalancer
       Properties:
-        Name: ${self:service}-alb-${self:provider.stage}
+        Name: payrix-alb-${self:provider.stage}
         Scheme: internet-facing
         Type: application
         SecurityGroups:
@@ -306,13 +305,13 @@ resources:
         IpAddressType: ipv4
         Tags:
           - Key: Name
-            Value: ${self:service}-alb-${self:provider.stage}
+            Value: payrix-alb-${self:provider.stage}
     
     # Default ALB Target Group
     DefaultTargetGroup:
       Type: AWS::ElasticLoadBalancingV2::TargetGroup
       Properties:
-        Name: ${self:service}-tg-${self:provider.stage}
+        Name: payrix-tg-${self:provider.stage}
         VpcId: !Ref MainVPC
         Port: 3000
         Protocol: HTTP
@@ -330,7 +329,7 @@ resources:
             Value: '30'
         Tags:
           - Key: Name
-            Value: ${self:service}-tg-${self:provider.stage}
+            Value: payrix-tg-${self:provider.stage}
     
     # HTTP Listener for ALB
     HttpListener:
