@@ -6,26 +6,85 @@ provider:
   profile: payrix
   region: us-east-1
   stage: ${opt:stage, 'dev'}
-  
-  # Enable these when needed
-  # vpc:
-  #   securityGroupIds:
-  #     - !Ref MainSecurityGroup
-  #   subnetIds:
-  #     - !Ref PrivateSubnet1
-  #     - !Ref PrivateSubnet2
 
 functions:
   # We'll define functions here later
 
 resources:
-  # We'll define AWS resources here incrementally
+  Resources:
+    # VPC Configuration
+    MainVPC:
+      Type: AWS::EC2::VPC
+      Properties:
+        CidrBlock: 10.0.0.0/16
+        EnableDnsSupport: true
+        EnableDnsHostnames: true
+        Tags:
+          - Key: Name
+            Value: ${self:service}-vpc-${self:provider.stage}
+    
+    # Internet Gateway for public subnets
+    InternetGateway:
+      Type: AWS::EC2::InternetGateway
+      Properties:
+        Tags:
+          - Key: Name
+            Value: ${self:service}-igw-${self:provider.stage}
+    
+    # Attach Internet Gateway to VPC
+    InternetGatewayAttachment:
+      Type: AWS::EC2::VPCGatewayAttachment
+      Properties:
+        InternetGatewayId: !Ref InternetGateway
+        VpcId: !Ref MainVPC
+    
+    # Public Subnet in first Availability Zone
+    PublicSubnet1:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref MainVPC
+        AvailabilityZone: ${self:provider.region}a
+        CidrBlock: 10.0.1.0/24
+        MapPublicIpOnLaunch: true
+        Tags:
+          - Key: Name
+            Value: ${self:service}-public-subnet-1-${self:provider.stage}
+    
+    # Private Subnet in first Availability Zone
+    PrivateSubnet1:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref MainVPC
+        AvailabilityZone: ${self:provider.region}a
+        CidrBlock: 10.0.2.0/24
+        MapPublicIpOnLaunch: false
+        Tags:
+          - Key: Name
+            Value: ${self:service}-private-subnet-1-${self:provider.stage}
+    
+    # Public Subnet in second Availability Zone
+    PublicSubnet2:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref MainVPC
+        AvailabilityZone: ${self:provider.region}b
+        CidrBlock: 10.0.3.0/24
+        MapPublicIpOnLaunch: true
+        Tags:
+          - Key: Name
+            Value: ${self:service}-public-subnet-2-${self:provider.stage}
+    
+    # Private Subnet in second Availability Zone
+    PrivateSubnet2:
+      Type: AWS::EC2::Subnet
+      Properties:
+        VpcId: !Ref MainVPC
+        AvailabilityZone: ${self:provider.region}b
+        CidrBlock: 10.0.4.0/24
+        MapPublicIpOnLaunch: false
+        Tags:
+          - Key: Name
+            Value: ${self:service}-private-subnet-2-${self:provider.stage}
 
 plugins:
   - serverless-iam-roles-per-function
-  - serverless-webpack
-  
-custom:
-  webpack:
-    webpackConfig: ./webpack.config.js
-    includeModules: true
